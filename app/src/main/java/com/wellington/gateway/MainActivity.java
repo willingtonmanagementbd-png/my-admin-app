@@ -59,7 +59,7 @@ public class MainActivity extends AppCompatActivity {
         root.setPadding(dp(20), dp(36), dp(20), dp(30));
         rootScrollView.addView(root);
 
-        // ================= HEADER =================
+        // HEADER
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.VERTICAL);
         header.setGravity(Gravity.CENTER_HORIZONTAL);
@@ -81,7 +81,7 @@ public class MainActivity extends AppCompatActivity {
 
         root.addView(header);
 
-        // ================= 🚀 VPN-STYLE MASTER TOGGLE CARD =================
+        // VPN MASTER TOGGLE CARD
         vpnCard = new LinearLayout(this);
         vpnCard.setOrientation(LinearLayout.HORIZONTAL);
         vpnCard.setGravity(Gravity.CENTER_VERTICAL);
@@ -93,7 +93,7 @@ public class MainActivity extends AppCompatActivity {
         switchMeta.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
         tvSwitchTitle = new TextView(this);
-        tvSwitchTitle.setText("GATEWAY DISCONNECTED");
+        tvSwitchTitle.setText("GATEWAY DISCONNECTED 🔴");
         tvSwitchTitle.setTextSize(14);
         tvSwitchTitle.setTextColor(Color.parseColor("#94A3B8"));
         tvSwitchTitle.setTypeface(Typeface.DEFAULT_BOLD);
@@ -109,7 +109,6 @@ public class MainActivity extends AppCompatActivity {
 
         vpnCard.addView(switchMeta);
 
-        // VPN Master Toggle
         vpnSwitch = new SwitchCompat(this);
         vpnSwitch.setShowText(false);
         setSwitchColors(false);
@@ -117,7 +116,7 @@ public class MainActivity extends AppCompatActivity {
 
         root.addView(vpnCard);
 
-        // ================= METRICS STATS CARDS =================
+        // METRICS STATS
         LinearLayout statsRow = new LinearLayout(this);
         statsRow.setOrientation(LinearLayout.HORIZONTAL);
         statsRow.setPadding(0, dp(20), 0, dp(18));
@@ -137,7 +136,7 @@ public class MainActivity extends AppCompatActivity {
 
         root.addView(statsRow);
 
-        // ================= CONFIGURATION CARD =================
+        // CONFIGURATION
         LinearLayout configBox = new LinearLayout(this);
         configBox.setOrientation(LinearLayout.VERTICAL);
         configBox.setPadding(dp(18), dp(18), dp(18), dp(18));
@@ -162,7 +161,7 @@ public class MainActivity extends AppCompatActivity {
 
         root.addView(configBox);
 
-        // ================= LIVE TERMINAL CONSOLE =================
+        // CONSOLE
         TextView tvConsoleTitle = new TextView(this);
         tvConsoleTitle.setText("REAL-TIME ACTIVITY CONSOLE");
         tvConsoleTitle.setTextSize(11);
@@ -188,18 +187,14 @@ public class MainActivity extends AppCompatActivity {
 
         setContentView(rootScrollView);
 
-        // ================= PREFS & RESTORING STATE =================
+        // PREFERENCES
         SharedPreferences pref = getSharedPreferences("GatewayPrefs", Context.MODE_PRIVATE);
         etUrl.setText(pref.getString("server_url", "https://wellington-info.com"));
         etToken.setText(pref.getString("secret_token", "WELLINGTON_MY_SECRET_KEY_9988"));
 
-        boolean isAlreadyRunning = pref.getBoolean("service_running", false);
-        vpnSwitch.setChecked(isAlreadyRunning);
-        updateVpnUi(isAlreadyRunning);
-
         requestAllPermissions();
 
-        // টগল সুইচের ইভেন্ট
+        // টগল সুইচ লজিক
         vpnSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> {
             String url = etUrl.getText().toString().trim().replaceAll("/+$", "");
             String token = etToken.getText().toString().trim();
@@ -219,15 +214,25 @@ public class MainActivity extends AppCompatActivity {
                     startService(serviceIntent);
                 }
                 updateVpnUi(true);
-                addLog("[VPN-ENGINE] Master Switch ON. Engine running in background 24/7.");
-                Toast.makeText(this, "Gateway Connected (24/7 Active)", Toast.LENGTH_SHORT).show();
+                addLog("[VPN-ENGINE] Master Switch ON. Engine running.");
             } else {
                 stopService(serviceIntent);
                 updateVpnUi(false);
                 addLog("[VPN-ENGINE] Master Switch OFF. Engine stopped.");
-                Toast.makeText(this, "Gateway Disconnected", Toast.LENGTH_SHORT).show();
             }
         });
+
+        // যদি আগে থেকে ON থাকে, তাহলে সার্ভিসটি অটোমেটিক চালু করে দেওয়া
+        boolean isAlreadyRunning = pref.getBoolean("service_running", false);
+        if (isAlreadyRunning) {
+            vpnSwitch.setChecked(true);
+            Intent serviceIntent = new Intent(this, GatewayService.class);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(serviceIntent);
+            } else {
+                startService(serviceIntent);
+            }
+        }
     }
 
     private void updateVpnUi(boolean isConnected) {
