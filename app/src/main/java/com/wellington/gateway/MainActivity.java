@@ -4,6 +4,7 @@ import android.Manifest;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -12,6 +13,8 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.telephony.SubscriptionInfo;
+import android.telephony.SubscriptionManager;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -29,11 +32,14 @@ public class MainActivity extends AppCompatActivity {
     private static MainActivity instance;
 
     private EditText etUrl, etToken;
+    private Spinner spSimSelector;
     private SwitchCompat vpnSwitch;
     private TextView tvSwitchTitle, tvSwitchSub, tvSentCount, tvPayCount, tvConsole;
     private LinearLayout vpnCard;
     private ScrollView consoleScrollView;
 
+    private List<SubscriptionInfo> availableSims = new ArrayList<>();
+    private int selectedSubId = -1;
     private int sentCount = 0;
     private int payCount = 0;
 
@@ -81,7 +87,7 @@ public class MainActivity extends AppCompatActivity {
 
         root.addView(header);
 
-        // VPN MASTER TOGGLE CARD
+        // VPN MASTER SWITCH
         vpnCard = new LinearLayout(this);
         vpnCard.setOrientation(LinearLayout.HORIZONTAL);
         vpnCard.setGravity(Gravity.CENTER_VERTICAL);
@@ -116,7 +122,7 @@ public class MainActivity extends AppCompatActivity {
 
         root.addView(vpnCard);
 
-        // METRICS STATS
+        // STATS
         LinearLayout statsRow = new LinearLayout(this);
         statsRow.setOrientation(LinearLayout.HORIZONTAL);
         statsRow.setPadding(0, dp(20), 0, dp(18));
@@ -136,20 +142,28 @@ public class MainActivity extends AppCompatActivity {
 
         root.addView(statsRow);
 
-        // CONFIGURATION
+        // CONFIGURATION BOX
         LinearLayout configBox = new LinearLayout(this);
         configBox.setOrientation(LinearLayout.VERTICAL);
         configBox.setPadding(dp(18), dp(18), dp(18), dp(18));
         configBox.setBackground(createCardDrawable("#0D1629", "#1E293B"));
 
         TextView tvCfgTitle = new TextView(this);
-        tvCfgTitle.setText("SERVER CONFIGURATION");
+        tvCfgTitle.setText("GATEWAY CONFIGURATION");
         tvCfgTitle.setTextSize(11);
         tvCfgTitle.setTypeface(Typeface.DEFAULT_BOLD);
         tvCfgTitle.setTextColor(Color.parseColor("#00D2FF"));
         tvCfgTitle.setLetterSpacing(0.06f);
         tvCfgTitle.setPadding(0, 0, 0, dp(10));
         configBox.addView(tvCfgTitle);
+
+        // 🚀 SIM SELECTION DROPDOWN (যে সিম দিয়ে মেসেজ পাঠাতে চান)
+        configBox.addView(createInputLabel("SELECT OUTGOING SIM CARD"));
+        spSimSelector = new Spinner(this);
+        spSimSelector.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+        spSimSelector.setBackground(createCardDrawable("#050A14", "#00D2FF"));
+        spSimSelector.setPadding(dp(12), 0, dp(12), 0);
+        configBox.addView(spSimSelector);
 
         configBox.addView(createInputLabel("ENDPOINT URL"));
         etUrl = createStyledInput("https://wellington-info.com");
@@ -191,10 +205,27 @@ public class MainActivity extends AppCompatActivity {
         SharedPreferences pref = getSharedPreferences("GatewayPrefs", Context.MODE_PRIVATE);
         etUrl.setText(pref.getString("server_url", "https://wellington-info.com"));
         etToken.setText(pref.getString("secret_token", "WELLINGTON_MY_SECRET_KEY_9988"));
+        selectedSubId = pref.getInt("selected_sub_id", -1);
 
         requestAllPermissions();
+        loadSimCards();
 
-        // টগল সুইচ লজিক
+        // সিম সিলেক্ট করলে তা সেভ করা
+        spSimSelector.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                if (position < availableSims.size()) {
+                    SubscriptionInfo info = availableSims.get(position);
+                    selectedSubId = info.getSubscriptionId();
+                    pref.edit().putInt("selected_sub_id", selectedSubId).apply();
+                    addLog("[SIM] Selected: " + info.getDisplayName() + " (Slot " + (info.getSimSlotIndex() + 1) + ")");
+                }
+            }
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {}
+        });
+
+        // টগল সুইচ
         vpnSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> {
             String url = etUrl.getText().toString().trim().replaceAll("/+$", "");
             String token = etToken.getText().toString().trim();
@@ -203,6 +234,7 @@ public class MainActivity extends AppCompatActivity {
                 .putString("server_url", url)
                 .putString("secret_token", token)
                 .putBoolean("service_running", isChecked)
+                .putInt("selected_sub_id", selectedSubId)
                 .apply();
 
             Intent serviceIntent = new Intent(this, GatewayService.class);
@@ -222,7 +254,6 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        // যদি আগে থেকে ON থাকে, তাহলে সার্ভিসটি অটোমেটিক চালু করে দেওয়া
         boolean isAlreadyRunning = pref.getBoolean("service_running", false);
         if (isAlreadyRunning) {
             vpnSwitch.setChecked(true);
@@ -233,6 +264,56 @@ public class MainActivity extends AppCompatActivity {
                 startService(serviceIntent);
             }
         }
+    }
+
+    // সিম কার্ড লোড করা
+    private void loadSimCards() {
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) {
+            return;
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+            SubscriptionManager sm = (SubscriptionManager) getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE);
+            if (sm != null) {
+                List<SubscriptionInfo> list = sm.getActiveSubscriptionInfoList();
+                if (list != null && !list.isEmpty()) {
+                    availableSims.clear();
+                    availableSims.addAll(list);
+
+                    List<String> simLabels = new ArrayList<>();
+                    int selectIndex = 0;
+
+                    for (int i = 0; i < list.size(); i++) {
+                        SubscriptionInfo info = list.get(i);
+                        String name = "[SIM " + (info.getSimSlotIndex() + 1) + "] " + info.getDisplayName();
+                        simLabels.add(name);
+
+                        if (info.getSubscriptionId() == selectedSubId) {
+                            selectIndex = i;
+                        }
+                    }
+
+                    ArrayAdapter<String> adapter = new ArrayAdapter<String>(this, android.R.layout.simple_spinner_dropdown_item, simLabels) {
+                        @Override
+                        public View getView(int position, View convertView, ViewGroup parent) {
+                            TextView v = (TextView) super.getView(position, convertView, parent);
+                            v.setTextColor(Color.WHITE);
+                            v.setTextSize(13);
+                            v.setTypeface(Typeface.DEFAULT_BOLD);
+                            return v;
+                        }
+                    };
+                    spSimSelector.setAdapter(adapter);
+                    spSimSelector.setSelection(selectIndex);
+                }
+            }
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        loadSimCards();
     }
 
     private void updateVpnUi(boolean isConnected) {
@@ -355,6 +436,7 @@ public class MainActivity extends AppCompatActivity {
         permissions.add(Manifest.permission.RECEIVE_SMS);
         permissions.add(Manifest.permission.READ_SMS);
         permissions.add(Manifest.permission.SEND_SMS);
+        permissions.add(Manifest.permission.READ_PHONE_STATE);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissions.add(Manifest.permission.POST_NOTIFICATIONS);
