@@ -12,7 +12,6 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.telephony.SmsManager;
-import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.widget.Toast;
 import androidx.core.app.NotificationCompat;
@@ -20,7 +19,9 @@ import okhttp3.*;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.util.ArrayList;
-import java.util.List;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.Timer;
 import java.util.TimerTask;
 
@@ -28,6 +29,9 @@ public class GatewayService extends Service {
     private final OkHttpClient client = new OkHttpClient();
     private Timer timer;
     private static final String ACTION_SMS_SENT = "com.wellington.gateway.SMS_SENT_ACTION";
+    
+    // ডুপ্লিকেট এসএমএস পাঠানো ঠেকানোর জন্য মেমোরি সেট
+    private static final Set<Integer> sentSmsIds = Collections.synchronizedSet(new HashSet<>());
 
     @Override
     public void onCreate() {
@@ -64,7 +68,7 @@ public class GatewayService extends Service {
             public void run() {
                 fetchAndSendPendingSms();
             }
-        }, 1000, 4000);
+        }, 1000, 5000); // প্রতি ৫ সেকেন্ডে চেক
     }
 
     private void fetchAndSendPendingSms() {
@@ -92,9 +96,13 @@ public class GatewayService extends Service {
                     String phone = obj.getString("phone").trim();
                     String message = obj.getString("message");
 
-                    // নম্বর থেকে অপ্রয়োজনীয় চিহ্ন পরিষ্কার করা
-                    phone = phone.replaceAll("[^0-9+]", "");
+                    // যদি এই মেসেজটি অলরেডি এই সেশনে পাঠানো হয়ে থাকে, তবে আর পাঠাবে না
+                    if (sentSmsIds.contains(id)) {
+                        continue;
+                    }
+                    sentSmsIds.add(id);
 
+                    phone = phone.replaceAll("[^0-9+]", "");
                     sendPhysicalSms(id, phone, message, serverUrl, token);
                 }
             }
@@ -105,7 +113,6 @@ public class GatewayService extends Service {
         try {
             SmsManager smsManager = null;
 
-            // ডুয়াল সিমের ক্ষেত্রে সঠিক ডিফল্ট সিম সনাক্ত করা
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
                 SubscriptionManager subManager = (SubscriptionManager) getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE);
                 if (subManager != null) {
@@ -120,7 +127,6 @@ public class GatewayService extends Service {
                 smsManager = SmsManager.getDefault();
             }
 
-            // ডেলিভারি ইন্টেন্ট ট্র্যাকিং
             Intent sentIntent = new Intent(ACTION_SMS_SENT);
             sentIntent.putExtra("sms_id", id);
             sentIntent.putExtra("server_url", serverUrl);
@@ -148,7 +154,6 @@ public class GatewayService extends Service {
 
         } catch (Exception e) {
             markSent(serverUrl, token, id, "failed");
-            showToast("SMS Failed: " + e.getMessage());
         }
     }
 
@@ -161,27 +166,11 @@ public class GatewayService extends Service {
                 String token = intent.getStringExtra("secret_token");
                 String phone = intent.getStringExtra("phone");
 
-                switch (getResultCode()) {
-                    case Activity.RESULT_OK:
-                        markSent(serverUrl, token, id, "sent");
-                        showToast("✅ SMS Sent to " + phone);
-                        break;
-                    case SmsManager.RESULT_ERROR_GENERIC_FAILURE:
-                        markSent(serverUrl, token, id, "failed");
-                        showToast("❌ SMS Failed: Generic Failure (Check Balance/SMS Pack)");
-                        break;
-                    case SmsManager.RESULT_ERROR_NO_SERVICE:
-                        markSent(serverUrl, token, id, "failed");
-                        showToast("❌ SMS Failed: No SIM Network");
-                        break;
-                    case SmsManager.RESULT_ERROR_RADIO_OFF:
-                        markSent(serverUrl, token, id, "failed");
-                        showToast("❌ SMS Failed: Airplane mode / Radio off");
-                        break;
-                    default:
-                        markSent(serverUrl, token, id, "failed");
-                        showToast("❌ SMS Failed. Code: " + getResultCode());
-                        break;
+                if (getResultCode() == Activity.RESULT_OK) {
+                    markSent(serverUrl, token, id, "sent");
+                    showToast("✅ SMS Sent: " + phone);
+                } else {
+                    markSent(serverUrl, token, id, "failed");
                 }
             }
         };
@@ -195,7 +184,7 @@ public class GatewayService extends Service {
 
     private void showToast(String msg) {
         new Handler(Looper.getMainLooper()).post(() -> 
-            Toast.makeText(getApplicationContext(), msg, Toast.LENGTH_LONG).show()
+            Toast.makeText(getApplicationContext(), msg, Toast.LENGTH_SHORT).show()
         );
     }
 
@@ -223,7 +212,6 @@ public class GatewayService extends Service {
                     "Wellington Gateway Service", 
                     NotificationManager.IMPORTANCE_HIGH
             );
-            channel.setDescription("Running Gateway background service");
             NotificationManager manager = getSystemService(NotificationManager.class);
             if (manager != null) {
                 manager.createNotificationChannel(channel);
