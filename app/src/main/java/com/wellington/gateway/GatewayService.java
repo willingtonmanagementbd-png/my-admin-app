@@ -10,7 +10,6 @@ import android.os.Build;
 import android.os.IBinder;
 import android.os.PowerManager;
 import android.telephony.SmsManager;
-import android.telephony.SubscriptionManager;
 import androidx.core.app.NotificationCompat;
 import okhttp3.*;
 import org.json.JSONArray;
@@ -81,6 +80,7 @@ public class GatewayService extends Service {
         SharedPreferences pref = getSharedPreferences("GatewayPrefs", Context.MODE_PRIVATE);
         String serverUrl = pref.getString("server_url", "");
         String token = pref.getString("secret_token", "");
+        int selectedSubId = pref.getInt("selected_sub_id", -1);
 
         if (serverUrl == null || serverUrl.isEmpty()) {
             MainActivity.log("[CONFIG-ERROR] Endpoint URL is empty!");
@@ -98,13 +98,13 @@ public class GatewayService extends Service {
             int code = response.code();
 
             if (code == 401) {
-                MainActivity.log("[API-ERROR 401] Secret Token Mismatch! Check token.");
+                MainActivity.log("[API-401] Secret Token Mismatch!");
                 return;
             } else if (code == 404) {
-                MainActivity.log("[API-ERROR 404] Route not found in routes/api.php!");
+                MainActivity.log("[API-404] Route not found in routes/api.php!");
                 return;
             } else if (code != 200) {
-                MainActivity.log("[API-ERROR] Server returned HTTP " + code);
+                MainActivity.log("[API-ERROR] Server HTTP " + code);
                 return;
             }
 
@@ -127,7 +127,7 @@ public class GatewayService extends Service {
 
                     phone = phone.replaceAll("[^0-9+]", "");
                     MainActivity.log("[DISPATCHING] Sending SMS ID #" + id + " to " + phone);
-                    sendPhysicalSms(id, phone, message, serverUrl, token);
+                    sendPhysicalSms(id, phone, message, serverUrl, token, selectedSubId);
                 }
             }
         } catch (Exception e) {
@@ -135,22 +135,21 @@ public class GatewayService extends Service {
         }
     }
 
-    private void sendPhysicalSms(int id, String phone, String message, String serverUrl, String token) {
+    private void sendPhysicalSms(int id, String phone, String message, String serverUrl, String token, int subId) {
         try {
             SmsManager smsManager = null;
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
-                SubscriptionManager subManager = (SubscriptionManager) getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE);
-                if (subManager != null) {
-                    int subId = SubscriptionManager.getDefaultSmsSubscriptionId();
-                    if (subId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
-                        smsManager = SmsManager.getSmsManagerForSubscriptionId(subId);
-                    }
-                }
+            // 🚀 ব্যবহারকারীর নির্বাচিত নির্দিষ্ট সিম দিয়ে পাঠানো
+            if (subId != -1 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+                smsManager = SmsManager.getSmsManagerForSubscriptionId(subId);
             }
 
             if (smsManager == null) {
-                smsManager = SmsManager.getDefault();
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    smsManager = getSystemService(SmsManager.class);
+                } else {
+                    smsManager = SmsManager.getDefault();
+                }
             }
 
             Intent sentIntent = new Intent(ACTION_SMS_SENT);
@@ -199,7 +198,7 @@ public class GatewayService extends Service {
                     MainActivity.countSent();
                 } else {
                     markSent(serverUrl, token, id, "failed");
-                    MainActivity.log("[DELIVERY-FAILED] Failed code: " + getResultCode());
+                    MainActivity.log("[DELIVERY-FAILED] Code: " + getResultCode());
                 }
             }
         };
