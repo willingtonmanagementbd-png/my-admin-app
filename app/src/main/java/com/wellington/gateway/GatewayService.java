@@ -1,28 +1,39 @@
 package com.wellington.gateway;
 
 import android.app.*;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.ServiceInfo;
 import android.os.Build;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.telephony.SmsManager;
+import android.telephony.SubscriptionInfo;
+import android.telephony.SubscriptionManager;
+import android.widget.Toast;
 import androidx.core.app.NotificationCompat;
 import okhttp3.*;
 import org.json.JSONArray;
 import org.json.JSONObject;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Timer;
 import java.util.TimerTask;
 
 public class GatewayService extends Service {
     private final OkHttpClient client = new OkHttpClient();
     private Timer timer;
+    private static final String ACTION_SMS_SENT = "com.wellington.gateway.SMS_SENT_ACTION";
 
     @Override
     public void onCreate() {
         super.onCreate();
         createNotificationChannel();
+        registerSmsDeliveryReceiver();
     }
 
     @Override
@@ -53,7 +64,7 @@ public class GatewayService extends Service {
             public void run() {
                 fetchAndSendPendingSms();
             }
-        }, 1000, 5000);
+        }, 1000, 4000);
     }
 
     private void fetchAndSendPendingSms() {
@@ -78,19 +89,114 @@ public class GatewayService extends Service {
                 for (int i = 0; i < array.length(); i++) {
                     JSONObject obj = array.getJSONObject(i);
                     int id = obj.getInt("id");
-                    String phone = obj.getString("phone");
+                    String phone = obj.getString("phone").trim();
                     String message = obj.getString("message");
 
-                    try {
-                        SmsManager smsManager = SmsManager.getDefault();
-                        smsManager.sendTextMessage(phone, null, message, null, null);
-                        markSent(serverUrl, token, id, "sent");
-                    } catch (Exception e) {
-                        markSent(serverUrl, token, id, "failed");
-                    }
+                    // নম্বর থেকে অপ্রয়োজনীয় চিহ্ন পরিষ্কার করা
+                    phone = phone.replaceAll("[^0-9+]", "");
+
+                    sendPhysicalSms(id, phone, message, serverUrl, token);
                 }
             }
         } catch (Exception ignored) {}
+    }
+
+    private void sendPhysicalSms(int id, String phone, String message, String serverUrl, String token) {
+        try {
+            SmsManager smsManager = null;
+
+            // ডুয়াল সিমের ক্ষেত্রে সঠিক ডিফল্ট সিম সনাক্ত করা
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+                SubscriptionManager subManager = (SubscriptionManager) getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE);
+                if (subManager != null) {
+                    int subId = SubscriptionManager.getDefaultSmsSubscriptionId();
+                    if (subId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
+                        smsManager = SmsManager.getSmsManagerForSubscriptionId(subId);
+                    }
+                }
+            }
+
+            if (smsManager == null) {
+                smsManager = SmsManager.getDefault();
+            }
+
+            // ডেলিভারি ইন্টেন্ট ট্র্যাকিং
+            Intent sentIntent = new Intent(ACTION_SMS_SENT);
+            sentIntent.putExtra("sms_id", id);
+            sentIntent.putExtra("server_url", serverUrl);
+            sentIntent.putExtra("secret_token", token);
+            sentIntent.putExtra("phone", phone);
+
+            int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                flags |= PendingIntent.FLAG_IMMUTABLE;
+            }
+
+            PendingIntent pi = PendingIntent.getBroadcast(this, id, sentIntent, flags);
+
+            ArrayList<String> parts = smsManager.divideMessage(message);
+            if (parts.size() > 1) {
+                ArrayList<PendingIntent> sentPIs = new ArrayList<>();
+                sentPIs.add(pi);
+                for (int p = 1; p < parts.size(); p++) {
+                    sentPIs.add(null);
+                }
+                smsManager.sendMultipartTextMessage(phone, null, parts, sentPIs, null);
+            } else {
+                smsManager.sendTextMessage(phone, null, message, pi, null);
+            }
+
+        } catch (Exception e) {
+            markSent(serverUrl, token, id, "failed");
+            showToast("SMS Failed: " + e.getMessage());
+        }
+    }
+
+    private void registerSmsDeliveryReceiver() {
+        BroadcastReceiver receiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                int id = intent.getIntExtra("sms_id", 0);
+                String serverUrl = intent.getStringExtra("server_url");
+                String token = intent.getStringExtra("secret_token");
+                String phone = intent.getStringExtra("phone");
+
+                switch (getResultCode()) {
+                    case Activity.RESULT_OK:
+                        markSent(serverUrl, token, id, "sent");
+                        showToast("✅ SMS Sent to " + phone);
+                        break;
+                    case SmsManager.RESULT_ERROR_GENERIC_FAILURE:
+                        markSent(serverUrl, token, id, "failed");
+                        showToast("❌ SMS Failed: Generic Failure (Check Balance/SMS Pack)");
+                        break;
+                    case SmsManager.RESULT_ERROR_NO_SERVICE:
+                        markSent(serverUrl, token, id, "failed");
+                        showToast("❌ SMS Failed: No SIM Network");
+                        break;
+                    case SmsManager.RESULT_ERROR_RADIO_OFF:
+                        markSent(serverUrl, token, id, "failed");
+                        showToast("❌ SMS Failed: Airplane mode / Radio off");
+                        break;
+                    default:
+                        markSent(serverUrl, token, id, "failed");
+                        showToast("❌ SMS Failed. Code: " + getResultCode());
+                        break;
+                }
+            }
+        };
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(receiver, new IntentFilter(ACTION_SMS_SENT), Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(receiver, new IntentFilter(ACTION_SMS_SENT));
+        }
+    }
+
+    private void showToast(String msg) {
+        new Handler(Looper.getMainLooper()).post(() -> 
+            Toast.makeText(getApplicationContext(), msg, Toast.LENGTH_LONG).show()
+        );
     }
 
     private void markSent(String serverUrl, String token, int id, String status) {
