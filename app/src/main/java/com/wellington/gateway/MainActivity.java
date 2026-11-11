@@ -8,7 +8,6 @@ import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
-import android.graphics.drawable.RippleDrawable;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -18,6 +17,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.*;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.widget.SwitchCompat;
 import androidx.core.app.ActivityCompat;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -29,13 +29,13 @@ public class MainActivity extends AppCompatActivity {
     private static MainActivity instance;
 
     private EditText etUrl, etToken;
-    private Button btnAction;
-    private TextView tvStatusBadge, tvSentCount, tvPayCount, tvConsole;
+    private SwitchCompat vpnSwitch;
+    private TextView tvSwitchTitle, tvSwitchSub, tvSentCount, tvPayCount, tvConsole;
+    private LinearLayout vpnCard;
     private ScrollView consoleScrollView;
 
     private int sentCount = 0;
     private int payCount = 0;
-    private boolean isRunning = false;
 
     public static MainActivity getInstance() {
         return instance;
@@ -46,22 +46,20 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         instance = this;
 
-        // স্ট্যাটাস বার ডার্ক করা
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             getWindow().setStatusBarColor(Color.parseColor("#050811"));
         }
 
-        // ================= ROOT SCROLL CONTAINER =================
         ScrollView rootScrollView = new ScrollView(this);
         rootScrollView.setBackgroundColor(Color.parseColor("#070C18"));
         rootScrollView.setFillViewport(true);
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(20), dp(40), dp(20), dp(30));
+        root.setPadding(dp(20), dp(36), dp(20), dp(30));
         rootScrollView.addView(root);
 
-        // ================= HEADER SECTION =================
+        // ================= HEADER =================
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.VERTICAL);
         header.setGravity(Gravity.CENTER_HORIZONTAL);
@@ -69,7 +67,7 @@ public class MainActivity extends AppCompatActivity {
         TextView tvTitle = new TextView(this);
         tvTitle.setText("WELLINGTON NODE");
         tvTitle.setTextSize(22);
-        tvTitle.setTextColor(Color.parseColor("#FFFFFF"));
+        tvTitle.setTextColor(Color.WHITE);
         tvTitle.setTypeface(Typeface.DEFAULT_BOLD);
         tvTitle.setLetterSpacing(0.08f);
         header.addView(tvTitle);
@@ -78,28 +76,53 @@ public class MainActivity extends AppCompatActivity {
         tvSub.setText("Institutional Payment & SMS Gateway Engine");
         tvSub.setTextSize(11);
         tvSub.setTextColor(Color.parseColor("#64748B"));
-        tvSub.setPadding(0, dp(4), 0, dp(14));
+        tvSub.setPadding(0, dp(4), 0, dp(16));
         header.addView(tvSub);
 
-        // Status Badge (🟢 / 🔴)
-        tvStatusBadge = new TextView(this);
-        tvStatusBadge.setText("● SYSTEM STANDBY");
-        tvStatusBadge.setTextSize(11);
-        tvStatusBadge.setTypeface(Typeface.DEFAULT_BOLD);
-        tvStatusBadge.setTextColor(Color.parseColor("#F59E0B"));
-        tvStatusBadge.setPadding(dp(16), dp(6), dp(16), dp(6));
-        tvStatusBadge.setBackground(createBadgeDrawable("#F59E0B", "#1C1917"));
-        header.addView(tvStatusBadge);
-
         root.addView(header);
+
+        // ================= 🚀 VPN-STYLE MASTER TOGGLE CARD =================
+        vpnCard = new LinearLayout(this);
+        vpnCard.setOrientation(LinearLayout.HORIZONTAL);
+        vpnCard.setGravity(Gravity.CENTER_VERTICAL);
+        vpnCard.setPadding(dp(20), dp(22), dp(20), dp(22));
+        vpnCard.setBackground(createCardDrawable("#0E1626", "#1E293B"));
+
+        LinearLayout switchMeta = new LinearLayout(this);
+        switchMeta.setOrientation(LinearLayout.VERTICAL);
+        switchMeta.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        tvSwitchTitle = new TextView(this);
+        tvSwitchTitle.setText("GATEWAY DISCONNECTED");
+        tvSwitchTitle.setTextSize(14);
+        tvSwitchTitle.setTextColor(Color.parseColor("#94A3B8"));
+        tvSwitchTitle.setTypeface(Typeface.DEFAULT_BOLD);
+        tvSwitchTitle.setLetterSpacing(0.06f);
+        switchMeta.addView(tvSwitchTitle);
+
+        tvSwitchSub = new TextView(this);
+        tvSwitchSub.setText("Tap switch to activate 24/7 background mode");
+        tvSwitchSub.setTextSize(11);
+        tvSwitchSub.setTextColor(Color.parseColor("#64748B"));
+        tvSwitchSub.setPadding(0, dp(4), 0, 0);
+        switchMeta.addView(tvSwitchSub);
+
+        vpnCard.addView(switchMeta);
+
+        // VPN Master Toggle
+        vpnSwitch = new SwitchCompat(this);
+        vpnSwitch.setShowText(false);
+        setSwitchColors(false);
+        vpnCard.addView(vpnSwitch);
+
+        root.addView(vpnCard);
 
         // ================= METRICS STATS CARDS =================
         LinearLayout statsRow = new LinearLayout(this);
         statsRow.setOrientation(LinearLayout.HORIZONTAL);
-        statsRow.setPadding(0, dp(24), 0, dp(20));
+        statsRow.setPadding(0, dp(20), 0, dp(18));
         statsRow.setWeightSum(2f);
 
-        // Card 1: Outgoing SMS Counter
         LinearLayout cardSms = createStatCard("OUTGOING SMS", "0", "#00D2FF");
         tvSentCount = (TextView) cardSms.getChildAt(1);
         statsRow.addView(cardSms);
@@ -108,7 +131,6 @@ public class MainActivity extends AppCompatActivity {
         spacer.setLayoutParams(new LinearLayout.LayoutParams(dp(12), ViewGroup.LayoutParams.MATCH_PARENT));
         statsRow.addView(spacer);
 
-        // Card 2: Received Payment Counter
         LinearLayout cardPay = createStatCard("PAYMENTS CAPTURED", "0", "#00E676");
         tvPayCount = (TextView) cardPay.getChildAt(1);
         statsRow.addView(cardPay);
@@ -123,121 +145,114 @@ public class MainActivity extends AppCompatActivity {
 
         TextView tvCfgTitle = new TextView(this);
         tvCfgTitle.setText("SERVER CONFIGURATION");
-        tvCfgTitle.setTextSize(12);
+        tvCfgTitle.setTextSize(11);
         tvCfgTitle.setTypeface(Typeface.DEFAULT_BOLD);
         tvCfgTitle.setTextColor(Color.parseColor("#00D2FF"));
         tvCfgTitle.setLetterSpacing(0.06f);
-        tvCfgTitle.setPadding(0, 0, 0, dp(12));
+        tvCfgTitle.setPadding(0, 0, 0, dp(10));
         configBox.addView(tvCfgTitle);
 
-        // Endpoint Input
-        TextView lblUrl = createInputLabel("ENDPOINT URL");
-        configBox.addView(lblUrl);
+        configBox.addView(createInputLabel("ENDPOINT URL"));
         etUrl = createStyledInput("https://wellington-info.com");
         configBox.addView(etUrl);
 
-        // Token Input
-        TextView lblToken = createInputLabel("SECRET ACCESS TOKEN");
-        configBox.addView(lblToken);
+        configBox.addView(createInputLabel("SECRET ACCESS TOKEN"));
         etToken = createStyledInput("WELLINGTON_MY_SECRET_KEY_9988");
         configBox.addView(etToken);
-
-        // Action Button
-        btnAction = new Button(this);
-        btnAction.setText("▶  START GATEWAY ENGINE");
-        btnAction.setTextColor(Color.WHITE);
-        btnAction.setTextSize(14);
-        btnAction.setTypeface(Typeface.DEFAULT_BOLD);
-        btnAction.setLetterSpacing(0.04f);
-        btnAction.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
-        btnAction.setBackground(createButtonDrawable("#0066FF", "#00D2FF"));
-
-        LinearLayout.LayoutParams btnParams = (LinearLayout.LayoutParams) btnAction.getLayoutParams();
-        btnParams.setMargins(0, dp(14), 0, 0);
-        configBox.addView(btnAction);
 
         root.addView(configBox);
 
         // ================= LIVE TERMINAL CONSOLE =================
         TextView tvConsoleTitle = new TextView(this);
         tvConsoleTitle.setText("REAL-TIME ACTIVITY CONSOLE");
-        tvConsoleTitle.setTextSize(12);
+        tvConsoleTitle.setTextSize(11);
         tvConsoleTitle.setTypeface(Typeface.DEFAULT_BOLD);
         tvConsoleTitle.setTextColor(Color.parseColor("#94A3B8"));
-        tvConsoleTitle.setPadding(dp(4), dp(22), 0, dp(8));
+        tvConsoleTitle.setPadding(dp(4), dp(20), 0, dp(8));
         root.addView(tvConsoleTitle);
 
         consoleScrollView = new ScrollView(this);
-        consoleScrollView.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(160)));
+        consoleScrollView.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(150)));
         consoleScrollView.setBackground(createCardDrawable("#030712", "#0F172A"));
         consoleScrollView.setPadding(dp(12), dp(12), dp(12), dp(12));
 
         tvConsole = new TextView(this);
-        tvConsole.setTextSize(11);
+        tvConsole.setTextSize(10.5f);
         tvConsole.setTypeface(Typeface.MONOSPACE);
         tvConsole.setTextColor(Color.parseColor("#38BDF8"));
         tvConsole.setLineSpacing(dp(4), 1f);
-        tvConsole.setText("[SYSTEM] Wellington Gateway Node Initialized.\n[STATUS] Ready to boot service.");
+        tvConsole.setText("[SYSTEM] Node ready.\n[PERSISTENCE] Background keep-alive enabled.");
         consoleScrollView.addView(tvConsole);
 
         root.addView(consoleScrollView);
 
         setContentView(rootScrollView);
 
-        // ================= PREFERENCES & LOGIC =================
+        // ================= PREFS & RESTORING STATE =================
         SharedPreferences pref = getSharedPreferences("GatewayPrefs", Context.MODE_PRIVATE);
         etUrl.setText(pref.getString("server_url", "https://wellington-info.com"));
         etToken.setText(pref.getString("secret_token", "WELLINGTON_MY_SECRET_KEY_9988"));
 
+        boolean isAlreadyRunning = pref.getBoolean("service_running", false);
+        vpnSwitch.setChecked(isAlreadyRunning);
+        updateVpnUi(isAlreadyRunning);
+
         requestAllPermissions();
 
-        btnAction.setOnClickListener(v -> {
+        // টগল সুইচের ইভেন্ট
+        vpnSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> {
             String url = etUrl.getText().toString().trim().replaceAll("/+$", "");
             String token = etToken.getText().toString().trim();
 
             pref.edit()
                 .putString("server_url", url)
                 .putString("secret_token", token)
+                .putBoolean("service_running", isChecked)
                 .apply();
 
             Intent serviceIntent = new Intent(this, GatewayService.class);
 
-            if (!isRunning) {
+            if (isChecked) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     startForegroundService(serviceIntent);
                 } else {
                     startService(serviceIntent);
                 }
-                setRunningState(true);
-                addLog("[ENGINE] Service Started. Listening to bKash/Nagad & Outgoing SMS.");
-                Toast.makeText(this, "Gateway Engine Started!", Toast.LENGTH_SHORT).show();
+                updateVpnUi(true);
+                addLog("[VPN-ENGINE] Master Switch ON. Engine running in background 24/7.");
+                Toast.makeText(this, "Gateway Connected (24/7 Active)", Toast.LENGTH_SHORT).show();
             } else {
                 stopService(serviceIntent);
-                setRunningState(false);
-                addLog("[ENGINE] Service Stopped.");
-                Toast.makeText(this, "Gateway Engine Stopped!", Toast.LENGTH_SHORT).show();
+                updateVpnUi(false);
+                addLog("[VPN-ENGINE] Master Switch OFF. Engine stopped.");
+                Toast.makeText(this, "Gateway Disconnected", Toast.LENGTH_SHORT).show();
             }
         });
     }
 
-    private void setRunningState(boolean running) {
-        isRunning = running;
-        if (running) {
-            tvStatusBadge.setText("● ENGINE ONLINE & POLLING");
-            tvStatusBadge.setTextColor(Color.parseColor("#00E676"));
-            tvStatusBadge.setBackground(createBadgeDrawable("#00E676", "#062817"));
-            btnAction.setText("⏹  STOP GATEWAY ENGINE");
-            btnAction.setBackground(createButtonDrawable("#DC2626", "#EF4444"));
+    private void updateVpnUi(boolean isConnected) {
+        setSwitchColors(isConnected);
+        if (isConnected) {
+            tvSwitchTitle.setText("GATEWAY CONNECTED 🟢");
+            tvSwitchTitle.setTextColor(Color.parseColor("#00E676"));
+            tvSwitchSub.setText("Active 24/7 • Will not stop on app close");
+            vpnCard.setBackground(createCardDrawable("#08221B", "#00E676"));
         } else {
-            tvStatusBadge.setText("● SYSTEM STANDBY");
-            tvStatusBadge.setTextColor(Color.parseColor("#F59E0B"));
-            tvStatusBadge.setBackground(createBadgeDrawable("#F59E0B", "#1C1917"));
-            btnAction.setText("▶  START GATEWAY ENGINE");
-            btnAction.setBackground(createButtonDrawable("#0066FF", "#00D2FF"));
+            tvSwitchTitle.setText("GATEWAY DISCONNECTED 🔴");
+            tvSwitchTitle.setTextColor(Color.parseColor("#94A3B8"));
+            tvSwitchSub.setText("Tap switch to activate 24/7 background mode");
+            vpnCard.setBackground(createCardDrawable("#0E1626", "#1E293B"));
         }
     }
 
-    // ================= LIVE LOGGING & METRICS =================
+    private void setSwitchColors(boolean active) {
+        int thumbColor = active ? Color.parseColor("#00E676") : Color.parseColor("#64748B");
+        int trackColor = active ? Color.parseColor("#0B3D2E") : Color.parseColor("#1E293B");
+
+        vpnSwitch.setThumbTintList(ColorStateList.valueOf(thumbColor));
+        vpnSwitch.setTrackTintList(ColorStateList.valueOf(trackColor));
+    }
+
     public static void log(String message) {
         if (instance != null) {
             new Handler(Looper.getMainLooper()).post(() -> instance.addLog(message));
@@ -268,7 +283,6 @@ public class MainActivity extends AppCompatActivity {
         consoleScrollView.post(() -> consoleScrollView.fullScroll(View.FOCUS_DOWN));
     }
 
-    // ================= DRAWABLE BUILDERS =================
     private LinearLayout createStatCard(String label, String value, String accentColor) {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
@@ -325,23 +339,6 @@ public class MainActivity extends AppCompatActivity {
         gd.setCornerRadius(dp(16));
         gd.setStroke(dp(1.5f), Color.parseColor(strokeColor));
         return gd;
-    }
-
-    private GradientDrawable createBadgeDrawable(String textColor, String bgColor) {
-        GradientDrawable gd = new GradientDrawable();
-        gd.setColor(Color.parseColor(bgColor));
-        gd.setCornerRadius(dp(99));
-        gd.setStroke(dp(1), Color.parseColor(textColor));
-        return gd;
-    }
-
-    private RippleDrawable createButtonDrawable(String color1, String color2) {
-        GradientDrawable gd = new GradientDrawable(
-            GradientDrawable.Orientation.LEFT_RIGHT,
-            new int[]{Color.parseColor(color1), Color.parseColor(color2)}
-        );
-        gd.setCornerRadius(dp(14));
-        return new RippleDrawable(ColorStateList.valueOf(Color.parseColor("#40FFFFFF")), gd, null);
     }
 
     private int dp(float dp) {
