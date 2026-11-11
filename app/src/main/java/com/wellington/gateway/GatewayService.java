@@ -4,6 +4,7 @@ import android.app.*;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.IBinder;
 import android.telephony.SmsManager;
@@ -19,28 +20,40 @@ public class GatewayService extends Service {
     private Timer timer;
 
     @Override
-    public int onStartCommand(Intent intent, int flags, int startId) {
+    public void onCreate() {
+        super.onCreate();
         createNotificationChannel();
+    }
+
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
         Notification notification = new NotificationCompat.Builder(this, "gateway_channel")
                 .setContentTitle("Wellington Gateway Active")
                 .setContentText("Listening for bKash/Nagad & Dispatching SMS...")
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setOngoing(true)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .build();
 
-        startForeground(1, notification);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+        } else {
+            startForeground(1, notification);
+        }
+
         startPolling();
         return START_STICKY;
     }
 
     private void startPolling() {
+        if (timer != null) timer.cancel();
         timer = new Timer();
-        // প্রতি ৬ সেকেন্ড পর পর Laravel চেক করবে
         timer.scheduleAtFixedRate(new TimerTask() {
             @Override
             public void run() {
                 fetchAndSendPendingSms();
             }
-        }, 0, 6000);
+        }, 1000, 5000);
     }
 
     private void fetchAndSendPendingSms() {
@@ -48,7 +61,8 @@ public class GatewayService extends Service {
         String serverUrl = pref.getString("server_url", "");
         String token = pref.getString("secret_token", "");
 
-        if (serverUrl.isEmpty()) return;
+        if (serverUrl == null || serverUrl.isEmpty()) return;
+        serverUrl = serverUrl.replaceAll("/+$", "");
 
         Request request = new Request.Builder()
                 .url(serverUrl + "/api/device/sms/pending")
@@ -67,7 +81,6 @@ public class GatewayService extends Service {
                     String phone = obj.getString("phone");
                     String message = obj.getString("message");
 
-                    // ফোনের সিম কার্ড দিয়ে এসএমএস পাঠানো
                     try {
                         SmsManager smsManager = SmsManager.getDefault();
                         smsManager.sendTextMessage(phone, null, message, null, null);
@@ -100,10 +113,15 @@ public class GatewayService extends Service {
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
-                    "gateway_channel", "Gateway Service", NotificationManager.IMPORTANCE_LOW
+                    "gateway_channel", 
+                    "Wellington Gateway Service", 
+                    NotificationManager.IMPORTANCE_HIGH
             );
+            channel.setDescription("Running Gateway background service");
             NotificationManager manager = getSystemService(NotificationManager.class);
-            if (manager != null) manager.createNotificationChannel(channel);
+            if (manager != null) {
+                manager.createNotificationChannel(channel);
+            }
         }
     }
 
