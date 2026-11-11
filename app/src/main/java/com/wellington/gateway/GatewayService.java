@@ -8,12 +8,10 @@ import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.ServiceInfo;
 import android.os.Build;
-import android.os.Handler;
 import android.os.IBinder;
-import android.os.Looper;
+import android.os.PowerManager;
 import android.telephony.SmsManager;
 import android.telephony.SubscriptionManager;
-import android.widget.Toast;
 import androidx.core.app.NotificationCompat;
 import okhttp3.*;
 import org.json.JSONArray;
@@ -28,9 +26,8 @@ import java.util.TimerTask;
 public class GatewayService extends Service {
     private final OkHttpClient client = new OkHttpClient();
     private Timer timer;
+    private PowerManager.WakeLock wakeLock;
     private static final String ACTION_SMS_SENT = "com.wellington.gateway.SMS_SENT_ACTION";
-    
-    // ডুপ্লিকেট এসএমএস পাঠানো ঠেকানোর জন্য মেমোরি সেট
     private static final Set<Integer> sentSmsIds = Collections.synchronizedSet(new HashSet<>());
 
     @Override
@@ -38,14 +35,30 @@ public class GatewayService extends Service {
         super.onCreate();
         createNotificationChannel();
         registerSmsDeliveryReceiver();
+
+        // স্ক্রিন অফ হলেও প্রসেসর চালু রাখার জন্য WakeLock
+        try {
+            PowerManager powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
+            if (powerManager != null) {
+                wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "WellingtonGateway::WakeLock");
+                wakeLock.acquire();
+            }
+        } catch (Exception ignored) {}
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        Intent notificationIntent = new Intent(this, MainActivity.class);
+        PendingIntent pendingIntent = PendingIntent.getActivity(
+                this, 0, notificationIntent,
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0
+        );
+
         Notification notification = new NotificationCompat.Builder(this, "gateway_channel")
-                .setContentTitle("Wellington Gateway Active")
-                .setContentText("Listening for bKash/Nagad & Dispatching SMS...")
+                .setContentTitle("Wellington Gateway Active 🟢")
+                .setContentText("24/7 Engine Running • Tap to open")
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentIntent(pendingIntent)
                 .setOngoing(true)
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .build();
@@ -57,7 +70,24 @@ public class GatewayService extends Service {
         }
 
         startPolling();
-        return START_STICKY;
+        return START_STICKY; // সার্ভিসটি অ্যান্ড্রয়েড নিজে বন্ধ করবে না
+    }
+
+    // 🚀 অ্যাপ সোয়াইপ করে কেটে দিলে স্বয়ংক্রিয়ভাবে আবার রিস্টার্ট হবে
+    @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        SharedPreferences pref = getSharedPreferences("GatewayPrefs", Context.MODE_PRIVATE);
+        boolean shouldRun = pref.getBoolean("service_running", false);
+
+        if (shouldRun) {
+            Intent restartServiceIntent = new Intent(getApplicationContext(), GatewayService.class);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(restartServiceIntent);
+            } else {
+                startService(restartServiceIntent);
+            }
+        }
+        super.onTaskRemoved(rootIntent);
     }
 
     private void startPolling() {
@@ -68,7 +98,7 @@ public class GatewayService extends Service {
             public void run() {
                 fetchAndSendPendingSms();
             }
-        }, 1000, 5000); // প্রতি ৫ সেকেন্ডে চেক
+        }, 1000, 5000);
     }
 
     private void fetchAndSendPendingSms() {
@@ -96,10 +126,7 @@ public class GatewayService extends Service {
                     String phone = obj.getString("phone").trim();
                     String message = obj.getString("message");
 
-                    // যদি এই মেসেজটি অলরেডি এই সেশনে পাঠানো হয়ে থাকে, তবে আর পাঠাবে না
-                    if (sentSmsIds.contains(id)) {
-                        continue;
-                    }
+                    if (sentSmsIds.contains(id)) continue;
                     sentSmsIds.add(id);
 
                     phone = phone.replaceAll("[^0-9+]", "");
@@ -168,9 +195,11 @@ public class GatewayService extends Service {
 
                 if (getResultCode() == Activity.RESULT_OK) {
                     markSent(serverUrl, token, id, "sent");
-                    showToast("✅ SMS Sent: " + phone);
+                    MainActivity.log("[SMS] Delivered to " + phone);
+                    MainActivity.countSent();
                 } else {
                     markSent(serverUrl, token, id, "failed");
+                    MainActivity.log("[SMS-ERROR] Failed to send to " + phone);
                 }
             }
         };
@@ -180,12 +209,6 @@ public class GatewayService extends Service {
         } else {
             registerReceiver(receiver, new IntentFilter(ACTION_SMS_SENT));
         }
-    }
-
-    private void showToast(String msg) {
-        new Handler(Looper.getMainLooper()).post(() -> 
-            Toast.makeText(getApplicationContext(), msg, Toast.LENGTH_SHORT).show()
-        );
     }
 
     private void markSent(String serverUrl, String token, int id, String status) {
@@ -212,6 +235,7 @@ public class GatewayService extends Service {
                     "Wellington Gateway Service", 
                     NotificationManager.IMPORTANCE_HIGH
             );
+            channel.setDescription("Running Gateway 24/7 background service");
             NotificationManager manager = getSystemService(NotificationManager.class);
             if (manager != null) {
                 manager.createNotificationChannel(channel);
@@ -222,6 +246,9 @@ public class GatewayService extends Service {
     @Override
     public void onDestroy() {
         if (timer != null) timer.cancel();
+        if (wakeLock != null && wakeLock.isHeld()) {
+            wakeLock.release();
+        }
         super.onDestroy();
     }
 
