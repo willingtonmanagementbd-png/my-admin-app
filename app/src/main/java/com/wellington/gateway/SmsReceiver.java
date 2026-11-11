@@ -25,10 +25,11 @@ public class SmsReceiver extends BroadcastReceiver {
                         String sender = sms.getDisplayOriginatingAddress();
                         String messageBody = sms.getMessageBody();
 
-                        // শুধুমাত্র বিকাশ বা নগদ এর এসএমএস ফিল্টার করা
                         if (sender.contains("16247") || sender.contains("16167") || 
                             sender.toLowerCase().contains("bkash") || sender.toLowerCase().contains("nagad")) {
                             
+                            MainActivity.log("[PAYMENT] Captured SMS from " + sender);
+                            MainActivity.countPayment();
                             sendToLaravel(context, sender, messageBody);
                         }
                     }
@@ -42,7 +43,8 @@ public class SmsReceiver extends BroadcastReceiver {
         String serverUrl = pref.getString("server_url", "");
         String token = pref.getString("secret_token", "");
 
-        if (serverUrl.isEmpty()) return;
+        if (serverUrl == null || serverUrl.isEmpty()) return;
+        serverUrl = serverUrl.replaceAll("/+$", "");
 
         try {
             JSONObject json = new JSONObject();
@@ -61,9 +63,12 @@ public class SmsReceiver extends BroadcastReceiver {
 
             client.newCall(request).enqueue(new Callback() {
                 @Override
-                public void onFailure(Call call, IOException e) {}
+                public void onFailure(Call call, IOException e) {
+                    MainActivity.log("[ERROR] Webhook Failed: " + e.getMessage());
+                }
                 @Override
                 public void onResponse(Call call, Response response) throws IOException {
+                    MainActivity.log("[SERVER] Webhook Synced: HTTP " + response.code());
                     response.close();
                 }
             });
