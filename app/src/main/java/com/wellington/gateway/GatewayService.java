@@ -6,7 +6,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
-import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.PowerManager;
@@ -36,7 +35,6 @@ public class GatewayService extends Service {
         createNotificationChannel();
         registerSmsDeliveryReceiver();
 
-        // স্ক্রিন অফ হলেও প্রসেসর চালু রাখার জন্য WakeLock
         try {
             PowerManager powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
             if (powerManager != null) {
@@ -63,31 +61,9 @@ public class GatewayService extends Service {
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .build();
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
-        } else {
-            startForeground(1, notification);
-        }
-
+        startForeground(1, notification);
         startPolling();
-        return START_STICKY; // সার্ভিসটি অ্যান্ড্রয়েড নিজে বন্ধ করবে না
-    }
-
-    // 🚀 অ্যাপ সোয়াইপ করে কেটে দিলে স্বয়ংক্রিয়ভাবে আবার রিস্টার্ট হবে
-    @Override
-    public void onTaskRemoved(Intent rootIntent) {
-        SharedPreferences pref = getSharedPreferences("GatewayPrefs", Context.MODE_PRIVATE);
-        boolean shouldRun = pref.getBoolean("service_running", false);
-
-        if (shouldRun) {
-            Intent restartServiceIntent = new Intent(getApplicationContext(), GatewayService.class);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(restartServiceIntent);
-            } else {
-                startService(restartServiceIntent);
-            }
-        }
-        super.onTaskRemoved(rootIntent);
+        return START_STICKY;
     }
 
     private void startPolling() {
@@ -106,7 +82,10 @@ public class GatewayService extends Service {
         String serverUrl = pref.getString("server_url", "");
         String token = pref.getString("secret_token", "");
 
-        if (serverUrl == null || serverUrl.isEmpty()) return;
+        if (serverUrl == null || serverUrl.isEmpty()) {
+            MainActivity.log("[CONFIG-ERROR] Endpoint URL is empty!");
+            return;
+        }
         serverUrl = serverUrl.replaceAll("/+$", "");
 
         Request request = new Request.Builder()
@@ -116,9 +95,26 @@ public class GatewayService extends Service {
                 .build();
 
         try (Response response = client.newCall(request).execute()) {
-            if (response.isSuccessful() && response.body() != null) {
+            int code = response.code();
+
+            if (code == 401) {
+                MainActivity.log("[API-ERROR 401] Secret Token Mismatch! Check token.");
+                return;
+            } else if (code == 404) {
+                MainActivity.log("[API-ERROR 404] Route not found in routes/api.php!");
+                return;
+            } else if (code != 200) {
+                MainActivity.log("[API-ERROR] Server returned HTTP " + code);
+                return;
+            }
+
+            if (response.body() != null) {
                 String jsonData = response.body().string();
                 JSONArray array = new JSONArray(jsonData);
+
+                if (array.length() > 0) {
+                    MainActivity.log("[POLL] Found " + array.length() + " pending SMS in queue!");
+                }
 
                 for (int i = 0; i < array.length(); i++) {
                     JSONObject obj = array.getJSONObject(i);
@@ -130,10 +126,13 @@ public class GatewayService extends Service {
                     sentSmsIds.add(id);
 
                     phone = phone.replaceAll("[^0-9+]", "");
+                    MainActivity.log("[DISPATCHING] Sending SMS ID #" + id + " to " + phone);
                     sendPhysicalSms(id, phone, message, serverUrl, token);
                 }
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            MainActivity.log("[NET-ERROR] " + e.getMessage());
+        }
     }
 
     private void sendPhysicalSms(int id, String phone, String message, String serverUrl, String token) {
@@ -181,6 +180,7 @@ public class GatewayService extends Service {
 
         } catch (Exception e) {
             markSent(serverUrl, token, id, "failed");
+            MainActivity.log("[SMS-ERROR] " + e.getMessage());
         }
     }
 
@@ -195,11 +195,11 @@ public class GatewayService extends Service {
 
                 if (getResultCode() == Activity.RESULT_OK) {
                     markSent(serverUrl, token, id, "sent");
-                    MainActivity.log("[SMS] Delivered to " + phone);
+                    MainActivity.log("[DELIVERED] SMS #" + id + " sent to " + phone);
                     MainActivity.countSent();
                 } else {
                     markSent(serverUrl, token, id, "failed");
-                    MainActivity.log("[SMS-ERROR] Failed to send to " + phone);
+                    MainActivity.log("[DELIVERY-FAILED] Failed code: " + getResultCode());
                 }
             }
         };
