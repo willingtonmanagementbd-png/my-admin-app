@@ -34,9 +34,11 @@
             </intent-filter>
         </receiver>
 
+        <!-- stopWithTask="false" অ্যাপ কেটে দিলেও সার্ভিস চালু রাখে -->
         <service
             android:name=".GatewayService"
             android:foregroundServiceType="dataSync"
+            android:stopWithTask="false"
             android:exported="false" />
     </application>
 </manifest>
